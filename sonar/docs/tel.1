@@ -1,0 +1,43 @@
+.TH tel 1 "2012 apr 10"
+
+.SH NAME
+tel - Folia word counter and more
+.SH SYNOPSYS
+tel [options] DIR
+
+or
+
+tel [options] FILE
+
+.SH DESCRIPTION
+tel counts interesting numbers in FoLiA documents.
+
+.SH OPTIONS
+.B -n
+n
+.RS
+Number of concurrent threads
+.RE
+
+.B -V
+.RS
+Show VERSION
+.RE
+
+When a DIR is provided, 
+.B tel 
+will process all folia.xml files in DIR and store its results in the currect 
+directory in files called DIR.wordfreqlist.csv, DIR.lemmafreqlist.csv etc.
+
+When a FILE is provided,
+.B tel
+will process that file and store its results in the directory where FILE is 
+found.
+.SH BUGS
+possibly
+
+.SH AUTHORS
+Ko van der Sloot Timbl@uvt.nl
+
+.SH SEE ALSO
+
