@@ -27,6 +27,7 @@
 
 */
 
+#include "timbl/CommandLine.h"
 #include "ticcutils/LogStream.h"
 
 class NgramServerClass {
@@ -36,19 +37,16 @@ class NgramServerClass {
   void Start( Timbl::TimblOpts& Opts );
   void fill_table( std::istream&, int );
   void exec( const std::string&, std::ostream& );
-  TiCC::LogStream cur_log;
-  void lookup( const std::string&, std::ostream& ) const;
+  size_t get_count( const std::string& );
+  void count( const std::string&, std::ostream& );
+  void lookup( const std::string&, std::ostream& );
+  void get_results( const std::string&, size_t, size_t, std::ostream& );
  private:
-  bool RunServer();
-  std::string configFile;
-  std::string pidFile;
-  std::string logFile;
-  bool doDaemon;
-  int serverPort;
-  int maxConn;
-  LogLevel dbLevel;
   int nGram;
-  std::multimap<std::string,std::string> table;
+  int clip;
+  std::multimap<std::string,std::string> *dict;
+  std::string last_query;
+  std::vector<std::string> result_set;
 };
 
 #endif
