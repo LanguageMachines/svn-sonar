@@ -173,25 +173,25 @@ void HttpServer::callback( childArgs *args ){
   map<string, NgramServerClass*> *servers =
     static_cast<map<string, NgramServerClass*> *>(callback_data);
   char logLine[256];
-  sprintf( logLine, "Thread %zd, on Socket %d", (uintptr_t)pthread_self(),
+  sprintf( logLine, "HTTP-Thread %zd, on Socket %d", (uintptr_t)pthread_self(),
 	   args->id() );
   *Log(myLog) << logLine << ", started." << endl;
   string Line;
   int timeout = 1;
   if ( nb_getline( args->is(), Line, timeout ) ){
-    *Dbg(myLog) << "FirstLine='" << Line << "'" << endl;
+    *Log(myLog) << "FirstLine='" << Line << "'" << endl;
     if ( Line.find( "HTTP" ) != string::npos ){
       // skip HTTP header
       string tmp;
       timeout = 1;
       while ( ( nb_getline( args->is(), tmp, timeout ), !tmp.empty()) ){
-	//	    cerr << "skip: read:'" << tmp << "'" << endl;;
+	*Log(myLog) << "skip: read:'" << tmp << "'" << endl;;
       }
       string::size_type spos = Line.find( "GET" );
       if ( spos != string::npos ){
 	string::size_type epos = Line.find( " HTTP" );
 	string line = Line.substr( spos+3, epos - spos - 3 );
-	*Dbg(myLog) << "Line='" << line << "'" << endl;
+	*Log(myLog) << "Line='" << line << "'" << endl;
 	epos = line.find( "?" );
 	string basename;
 	if ( epos != string::npos ){
@@ -200,8 +200,10 @@ void HttpServer::callback( childArgs *args ){
 	  epos = basename.find( "/" );
 	  if ( epos != string::npos ){
 	    basename = basename.substr( epos+1 );
+	    *Log(myLog) << "base='" << basename << "'" << endl;
 	    map<string,NgramServerClass*>::const_iterator it= servers->find(basename);
 	    if ( it != servers->end() ){
+	      *Log(myLog) << "found experiment '" << basename << "'" << endl;
 	      NgramServerClass api(*it->second);
 	      LogStream LS( &myLog );
 	      LogStream DS( &myLog );
@@ -209,7 +211,16 @@ void HttpServer::callback( childArgs *args ){
 	      LS.message(logLine);
 	      DS.setstamp( StampBoth );
 	      LS.setstamp( StampBoth );
-	      nb_putline( args->os(), tmp , timeout );
+	      XmlDoc doc( "TiMblResult" );
+	      xmlNode *root = doc.getRoot();
+	      XmlSetAttribute( root, "att", "aha" );
+	      XmlNewTextChild( root, "node", "test" );
+
+	      string out = doc.toString();
+	      *Log(myLog) << "serialized '" << out << "'" << endl;
+	      timeout = 10;
+	      nb_putline( args->os(), out , timeout );
+	      args->os() << endl;
 	    }
 	    else {
 	      *Dbg(myLog) << "invalid BASE! '" << basename
