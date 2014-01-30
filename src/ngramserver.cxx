@@ -52,10 +52,17 @@ inline void usage(){
   exit( EXIT_SUCCESS );
 }
 
-class HttpServer : public HttpServerBase {
+class SRUServer : public HttpServerBase {
 public:
   void callback( childArgs* );
-  HttpServer( const TiCC::Configuration *c ): HttpServerBase( c ){};
+  bool parseURL();
+  SRUServer( const TiCC::Configuration *c ): HttpServerBase( c ){};
+  string base;
+  string queryString;
+  string startPos;
+  string maxItems;
+  istream *is;
+  ostream *os;
 };
 
 #define IS_DIGIT(x) (((x) >= '0') && ((x) <= '9'))
@@ -100,26 +107,16 @@ void xml_error( ostream& os, const string& message ){
   os << endl;
 }
 
-void HttpServer::callback( childArgs *args ){
-  // process the test material
-  // report connection to the server terminal
-  //
-  args->socket()->setNonBlocking();
-  map<string, NgramServerClass*> *servers =
-    static_cast<map<string, NgramServerClass*> *>(callback_data);
-  char logLine[256];
-  sprintf( logLine, "HTTP-Thread %zd, on Socket %d", (uintptr_t)pthread_self(),
-	   args->id() );
-  *Log(myLog) << logLine << ", started." << endl;
+bool SRUServer::parseURL() {
   string Line;
   int timeout = 1;
-  if ( nb_getline( args->is(), Line, timeout ) ){
+  if ( nb_getline( *is, Line, timeout ) ){
     *Dbg(myLog) << "FirstLine='" << Line << "'" << endl;
     if ( Line.find( "HTTP" ) != string::npos ){
       // skip HTTP header
       string tmp;
       timeout = 1;
-      while ( ( nb_getline( args->is(), tmp, timeout ), !tmp.empty()) ){
+      while ( ( nb_getline( *is, tmp, timeout ), !tmp.empty()) ){
 	*Dbg(myLog) << "skip: read:'" << tmp << "'" << endl;;
       }
       string::size_type spos = Line.find( "GET" );
@@ -134,152 +131,159 @@ void HttpServer::callback( childArgs *args ){
 	  string qstring = line.substr( epos+1 );
 	  epos = basename.find( "/" );
 	  if ( epos != string::npos ){
-	    basename = basename.substr( epos+1 );
-	    *Dbg(myLog) << "base='" << basename << "'" << endl;
-	    map<string,NgramServerClass*>::const_iterator it= servers->find(basename);
-	    if ( it != servers->end() ){
-	      *Dbg(myLog) << "found experiment '" << basename << "'" << endl;
-	      vector<string> qargs;
-	      size_t num = split_at( qstring, qargs, "&" );
-	      string querys;
-	      string start;
-	      string max;
-	      for( size_t i=0; i < num; ++i ){
-		vector<string> parts;
-		int nump = split_at( qargs[i], parts, "=" );
-		if ( nump != 2 ){
-		  xml_error( args->os(), "invalid query: " + qstring );
-		  return;
-		}
-		if ( parts[0] == "startPosition" ){
-		  start = parts[1];
-		}
-		else if ( parts[0] == "maximumItems" ){
-		  max = parts[1];
-		}
-		else if ( parts[0] == "query" ){
-		 querys = parts[1];
-		}
-		else {
-		  xml_error( args->os(), "unsupported item " + parts[0]
-			     + " in query" );
-		  return;
-		}
+	    base = basename.substr( epos+1 );
+	    *Dbg(myLog) << "base='" << base << "'" << endl;
+
+	    vector<string> qargs;
+	    size_t num = split_at( qstring, qargs, "&" );
+	    for( size_t i=0; i < num; ++i ){
+	      vector<string> parts;
+	      int nump = split_at( qargs[i], parts, "=" );
+	      if ( nump != 2 ){
+		xml_error( *os, "invalid query: " + qstring );
+		return false;
 	      }
-	      string query = url_decode( querys );
-	      *Dbg(myLog) << "query='" << query << "'" << endl;
-	      *Dbg(myLog) << "startPosString='" << start << "'" << endl;
-	      *Dbg(myLog) << "maxItemsString='" << max << "'" << endl;
-	      string command = "show";
-	      string search;
-	      vector<string> qparts;
-	      int numq = split( query, qparts );
-	      if ( numq > 0 ){
-		command = qparts[0];
-		if ( command == "count" ){
-		  if ( numq < 3 ){
-		    xml_error( args->os(), "not enough arguments for 'count' "
-			       + query );
-		    return;
-		  }
-		  else if ( numq > 3 ){
-		    xml_error( args->os(), "to many arguments for 'count'"
-			       + query );
-		    return;
-		  }
-		  search = qparts[1] + "-" + qparts[2];
-		}
-		else if ( command == "show" ){
-		  if ( numq < 3 ){
-		    xml_error( args->os(), "not enough arguments for 'show' "
-			       + query );
-		    return;
-		  }
-		  else if ( numq > 3 ){
-		    xml_error( args->os(), "to many arguments for 'show'"
-			       + query );
-		    return;
-		  }
-		  search = qparts[1] + "-" + qparts[2];
-		}
-		else {
-		  xml_error( args->os(), "unsupported command"	+ command );
-		  return;
-		}
+	      if ( parts[0] == "startPosition" ){
+		startPos = parts[1];
 	      }
-	      *Dbg(myLog) << "command='" << command << "'" << endl;
-	      int startPos = 1;
-	      if ( !start.empty() ){
-		if ( !stringTo( start, startPos ) ||
-		     startPos < 1 ){
-		  xml_error( args->os(), "invalid value for startPosition: "
-			     + start );
-		  return;
-		}
+	      else if ( parts[0] == "maximumItems" ){
+		maxItems = parts[1];
 	      }
-	      *Dbg(myLog) << "startPos='" << startPos << "'" << endl;
-	      int maxItems = 0;
-	      if ( !max.empty() ){
-		if ( !stringTo( max, maxItems ) ){
-		  xml_error( args->os(), "invalid value for maximumItems: "
-			     + start );
-		  return;
-		}
-	      }
-	      *Dbg(myLog) << "maxItems='" << maxItems << "'" << endl;
-	      NgramServerClass api(*it->second);
-	      LogStream LS( &myLog );
-	      LogStream DS( &myLog );
-	      DS.message(logLine);
-	      LS.message(logLine);
-	      DS.setstamp( StampBoth );
-	      LS.setstamp( StampBoth );
-	      XmlDoc doc( "searchResponse" );
-	      xmlNode *root = doc.getRoot();
-	      XmlSetAttribute( root, "ngram-size",
-			       toString(it->second->ngramval() ) );
-	      if ( command == "count" ){
-		size_t cnt = api.get_count( search );
-		XmlNewTextChild( root, "numberOfItems", toString(cnt) );
+	      else if ( parts[0] == "query" ){
+		queryString = parts[1];
 	      }
 	      else {
-		vector<string> res;
-		size_t next = 0;
-		size_t cnt = api.get_result( res, search, startPos, maxItems,
-					     next );
-		XmlNewTextChild( root, "resultSetId", search );
-		XmlNewTextChild( root, "numberOfItems", toString(cnt) );
-		xmlNode *recs = XmlNewChild( root, "records" );
-
-		for ( size_t i=0; i < res.size(); ++i ){
-		  xmlNode *rec = XmlNewChild( recs, "record" );
-		  XmlNewTextChild( rec, "recordSchema", "info:srw/schema/1/dc-v1.1" );
-		  XmlNewTextChild( rec, "recordPacking", "string" );
-		  XmlNewTextChild( rec, "recordData", res[i] );
-		  XmlNewTextChild( rec, "recordPosition",
-				   toString( startPos+i ) );
-		}
-		if ( next != 0 )
-		  XmlNewTextChild( root, "nextRecordPosition", toString(next) );
+		xml_error( *os, "unsupported item " + parts[0]
+			   + " in query" );
+		return false;
 	      }
-	      XmlNewTextChild( root, "echoedRequest", querys );
-	      string out = doc.toString();
-	      *Dbg(myLog) << "serialized doc '" << out << "'" << endl;
-	      timeout = 10;
-	      nb_putline( args->os(), out , timeout );
-	      args->os() << endl;
 	    }
-	    else {
-	      *Dbg(myLog) << "invalid BASE! '" << basename
-			  << "'" << endl;
-	      xml_error( args->os(), "invalid base: " + basename );
-	      return;
-	    }
-	    args->os() << endl;
+	    queryString = url_decode( queryString );
+	    *Log(myLog) << "queryString='" << queryString << "'" << endl;
+	    *Log(myLog) << "startPosString='" << startPos << "'" << endl;
+	    *Log(myLog) << "maxItemsString='" << maxItems << "'" << endl;
+	    return true;
 	  }
 	}
       }
     }
+  }
+  return false;
+}
+
+void SRUServer::callback( childArgs *args ){
+  args->socket()->setNonBlocking();
+  os = &args->os();
+  is = &args->is();
+  map<string, NgramServerClass*> *servers =
+    static_cast<map<string, NgramServerClass*> *>(callback_data);
+  char logLine[256];
+  sprintf( logLine, "HTTP-Thread %zd, on Socket %d", (uintptr_t)pthread_self(),
+	   args->id() );
+  *Log(myLog) << logLine << ", started." << endl;
+  if ( parseURL() ){
+    map<string,NgramServerClass*>::const_iterator it= servers->find(base);
+    if ( it != servers->end() ){
+      *Dbg(myLog) << "found experiment '" << base << "'" << endl;
+      string command = "show";
+      string search;
+      vector<string> qparts;
+      int numq = split( queryString, qparts );
+      if ( numq > 0 ){
+	command = qparts[0];
+	if ( command == "count" ){
+	  if ( numq < 3 ){
+	    xml_error( args->os(), "not enough arguments for 'count' "
+		       + queryString );
+	    return;
+	  }
+	  else if ( numq > 3 ){
+	    xml_error( args->os(), "to many arguments for 'count'"
+		       + queryString );
+	    return;
+	  }
+	  search = qparts[1] + "-" + qparts[2];
+	}
+	else if ( command == "show" ){
+	  if ( numq < 3 ){
+	    xml_error( args->os(), "not enough arguments for 'show' "
+		       + queryString );
+	    return;
+	  }
+	  else if ( numq > 3 ){
+	    xml_error( args->os(), "to many arguments for 'show'"
+		       + queryString );
+	    return;
+	  }
+	  search = qparts[1] + "-" + qparts[2];
+	}
+	else {
+	  xml_error( args->os(), "unsupported command"	+ command );
+	  return;
+	}
+      }
+      *Dbg(myLog) << "command='" << command << "'" << endl;
+      int start = 1;
+      if ( !startPos.empty() ){
+	if ( !stringTo( startPos, start ) ||
+	     start < 1 ){
+	  xml_error( args->os(), "invalid value for startPosition: "
+		     + startPos );
+	  return;
+	}
+      }
+      *Dbg(myLog) << "startPos='" << start << "'" << endl;
+      int max = 0;
+      if ( !maxItems.empty() ){
+	if ( !stringTo( maxItems, max ) ){
+	  xml_error( args->os(), "invalid value for maximumItems: "
+		     + maxItems );
+	  return;
+	}
+      }
+      *Dbg(myLog) << "maxItems='" << max << "'" << endl;
+      NgramServerClass api(*it->second);
+      XmlDoc doc( "searchResponse" );
+      xmlNode *root = doc.getRoot();
+      XmlSetAttribute( root, "ngram-size",
+		       toString(it->second->ngramval() ) );
+      if ( command == "count" ){
+	size_t cnt = api.get_count( search );
+	XmlNewTextChild( root, "numberOfItems", toString(cnt) );
+      }
+      else {
+	vector<string> res;
+	size_t next = 0;
+	size_t cnt = api.get_result( res, search, start, max,
+				     next );
+	XmlNewTextChild( root, "resultSetId", search );
+	XmlNewTextChild( root, "numberOfItems", toString(cnt) );
+	xmlNode *recs = XmlNewChild( root, "records" );
+
+	for ( size_t i=0; i < res.size(); ++i ){
+	  xmlNode *rec = XmlNewChild( recs, "record" );
+	  XmlNewTextChild( rec, "recordSchema", "info:srw/schema/1/dc-v1.1" );
+	  XmlNewTextChild( rec, "recordPacking", "string" );
+	  XmlNewTextChild( rec, "recordData", res[i] );
+	  XmlNewTextChild( rec, "recordPosition", toString( start+i ) );
+	}
+	if ( next != 0 )
+	  XmlNewTextChild( root, "nextRecordPosition", toString(next) );
+      }
+      XmlNewTextChild( root, "echoedRequest", queryString );
+      string out = doc.toString();
+      *Dbg(myLog) << "serialized doc '" << out << "'" << endl;
+      int timeout = 10;
+      nb_putline( args->os(), out , timeout );
+      args->os() << endl;
+    }
+    else {
+      *Dbg(myLog) << "invalid BASE! '" << base
+		  << "'" << endl;
+      xml_error( args->os(), "invalid base: " + base );
+      return;
+    }
+    args->os() << endl;
   }
 }
 
@@ -492,8 +496,8 @@ ServerBase *startServer( TimblOpts& opts ){
     opts.Delete( "debug" );
   }
   string protocol = config->lookUp( "protocol" );
-  if ( protocol == "http" || protocol.empty() )
-    return new HttpServer( config );
+  if ( protocol.empty() || protocol == "sru" )
+    return new SRUServer( config );
   else {
     cerr << "unsupported protocol " << protocol << endl;
     return 0;
@@ -550,7 +554,6 @@ void init( ServerBase *server, TimblOpts& opts ){
       NgramServerClass *run = new NgramServerClass( opts, &server->myLog );
       if ( run ){
 	(*servers)[it->first] = run;
-	server->myLog << "run = " << (void*)run << endl;
 	server->myLog << "started experiment " << it->first
 		      << " with parameters: " << it->second << endl;
       }
