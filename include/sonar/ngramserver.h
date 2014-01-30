@@ -27,26 +27,38 @@
 
 */
 
+#include <ctime>
 #include "timbl/CommandLine.h"
 #include "ticcutils/LogStream.h"
 
+class resultSet {
+ public:
+ resultSet( const std::string& s ) { std::time( &start ); };
+  std::time_t start;
+  std::vector<std::string> rset;
+};
+
 class NgramServerClass {
  public:
-  NgramServerClass( Timbl::TimblOpts& opts );
+  NgramServerClass( Timbl::TimblOpts& , TiCC::LogStream* );
+  NgramServerClass( const NgramServerClass& );
   ~NgramServerClass();
   void Start( Timbl::TimblOpts& Opts );
   void fill_table( std::istream&, int );
-  void exec( const std::string&, std::ostream& );
   size_t get_count( const std::string& );
-  void count( const std::string&, std::ostream& );
-  void lookup( const std::string&, std::ostream& );
-  void get_results( const std::string&, size_t, size_t, std::ostream& );
+  size_t get_result( std::vector<std::string>&, const std::string&,
+		     size_t, size_t, size_t& );
+  size_t get_result( std::vector<std::string>&, size_t, size_t );
+  int ngramval() const { return nGram; };
+  resultSet *getResultSet( const std::string& ) const;
+  void cleanResults( int );
  private:
+  bool cloned;
   int nGram;
   int clip;
+  TiCC::LogStream *log;
   std::multimap<std::string,std::string> *dict;
-  std::string last_query;
-  std::vector<std::string> result_set;
+  std::map<std::string,resultSet*> *result_sets;
 };
 
 #endif

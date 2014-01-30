@@ -52,118 +52,53 @@ inline void usage(){
   exit( EXIT_SUCCESS );
 }
 
-class TcpServer : public TcpServerBase {
-public:
-  void callback( childArgs* );
-  TcpServer( const TiCC::Configuration *c ): TcpServerBase( c ){};
-};
-
 class HttpServer : public HttpServerBase {
 public:
   void callback( childArgs* );
   HttpServer( const TiCC::Configuration *c ): HttpServerBase( c ){};
 };
 
-void TcpServer::callback( childArgs *args ){
-  int sockId = args->id();
-  NgramServerClass *client = 0;
-  map<string, NgramServerClass*> *servers =
-    static_cast<map<string, NgramServerClass*> *>(callback_data);
-
-  string baseName;
-  args->os() << "Welcome to the NGgram server." << endl;
-  if ( servers->size() == 1
-       && servers->find("default") != servers->end() ){
-    baseName = "default";
-    //
-    char line[256];
-    sprintf( line, "Thread %zd, on Socket %d", (uintptr_t)pthread_self(),
-	     sockId );
-    *Log(myLog) << line << ", started." << endl;
-  }
-  else {
-    args->os() << "available bases: ";
-    map<string,NgramServerClass*>::const_iterator it = servers->begin();
-    while ( it != servers->end() ){
-      args->os() << it->first << " ";
-      ++it;
-    }
-    args->os() << endl;
-    string line;
-    while ( getline( args->is(), line ) ){
-      line = TiCC::trim( line );
-      if ( line.empty() )
-	break;
-      vector<string> vec;
-      int num = TiCC::split( line, vec );
-      if ( num == 2 ){
-	if ( vec[0] == "base" ){
-	  baseName = vec[1];
-	}
-	else {
-	  args->os() << "select a base first!" << endl;
-	}
-      }
-      else {
-	args->os() << "select a base first!" << endl;
-      }
-    }
-  }
-  size_t count = 0;
-  if ( !baseName.empty() ){
-    map<string,NgramServerClass*>::const_iterator it = servers->find( baseName );
-    if ( it != servers->end() ){
-      NgramServerClass exp(*it->second);
-      string line;
-      while ( getline( args->is(), line ) ){
-	line = TiCC::trim( line );
-	if ( line.empty() )
-	  break;
-	exp.exec( line, args->os() );
-	++count;
-      }
-    }
-    else {
-      args->os() << "base " << baseName << " doesn't exist" << endl;
-    }
-  }
-  *Log(myLog) << "Thread " << (uintptr_t)pthread_self()
-	      << " terminated, " << count
-	      << " instances processed " << endl;
-}
-
 #define IS_DIGIT(x) (((x) >= '0') && ((x) <= '9'))
 #define IS_HEX(x) ((IS_DIGIT(x)) || (((x) >= 'a') && ((x) <= 'f')) || \
             (((x) >= 'A') && ((x) <= 'F')))
 
 
-  string urlDecode( const string& s ) {
-    int cc;
-    string result;
-    int len=s.size();
-    for (int i=0; i<len ; ++i ) {
-      cc=s[i];
-      if (cc == '+') {
-	result += ' ';
-      }
-      else if ( cc == '%' &&
-		( i < len-2 &&
-		  ( IS_HEX(s[i+1]) ) &&
-		  ( IS_HEX(s[i+2]) ) ) ){
-	std::istringstream ss( "0x"+s.substr(i+1,2) );
-	int tmp;
-	ss >> std::showbase >> std::hex;
-	ss >> tmp;
+string url_decode( const string& s ) {
+  int cc;
+  string result;
+  int len=s.size();
+  for (int i=0; i<len ; ++i ) {
+    cc=s[i];
+    if (cc == '+') {
+      result += ' ';
+    }
+    else if ( cc == '%' &&
+	      ( i < len-2 &&
+		( IS_HEX(s[i+1]) ) &&
+		( IS_HEX(s[i+2]) ) ) ){
+      std::istringstream ss( "0x"+s.substr(i+1,2) );
+      int tmp;
+      ss >> std::showbase >> std::hex;
+      ss >> tmp;
       result = result + (char)tmp;
       i += 2;
-      }
-      else {
-	result += cc;
-      }
     }
-    return result;
+    else {
+      result += cc;
+    }
   }
+  return result;
+}
 
+void xml_error( ostream& os, const string& message ){
+  XmlDoc doc( "searchResponse" );
+  xmlNode *root = doc.getRoot();
+  XmlNewTextChild( root, "diagnostics", message );
+  string out = doc.toString();
+  int timeout = 10;
+  nb_putline( os, out , timeout );
+  os << endl;
+}
 
 void HttpServer::callback( childArgs *args ){
   // process the test material
@@ -179,19 +114,19 @@ void HttpServer::callback( childArgs *args ){
   string Line;
   int timeout = 1;
   if ( nb_getline( args->is(), Line, timeout ) ){
-    *Log(myLog) << "FirstLine='" << Line << "'" << endl;
+    *Dbg(myLog) << "FirstLine='" << Line << "'" << endl;
     if ( Line.find( "HTTP" ) != string::npos ){
       // skip HTTP header
       string tmp;
       timeout = 1;
       while ( ( nb_getline( args->is(), tmp, timeout ), !tmp.empty()) ){
-	*Log(myLog) << "skip: read:'" << tmp << "'" << endl;;
+	*Dbg(myLog) << "skip: read:'" << tmp << "'" << endl;;
       }
       string::size_type spos = Line.find( "GET" );
       if ( spos != string::npos ){
 	string::size_type epos = Line.find( " HTTP" );
 	string line = Line.substr( spos+3, epos - spos - 3 );
-	*Log(myLog) << "Line='" << line << "'" << endl;
+	*Dbg(myLog) << "URL='" << line << "'" << endl;
 	epos = line.find( "?" );
 	string basename;
 	if ( epos != string::npos ){
@@ -200,10 +135,98 @@ void HttpServer::callback( childArgs *args ){
 	  epos = basename.find( "/" );
 	  if ( epos != string::npos ){
 	    basename = basename.substr( epos+1 );
-	    *Log(myLog) << "base='" << basename << "'" << endl;
+	    *Dbg(myLog) << "base='" << basename << "'" << endl;
 	    map<string,NgramServerClass*>::const_iterator it= servers->find(basename);
 	    if ( it != servers->end() ){
-	      *Log(myLog) << "found experiment '" << basename << "'" << endl;
+	      *Dbg(myLog) << "found experiment '" << basename << "'" << endl;
+	      vector<string> qargs;
+	      size_t num = split_at( qstring, qargs, "&" );
+	      string querys;
+	      string start;
+	      string max;
+	      for( size_t i=0; i < num; ++i ){
+		vector<string> parts;
+		int nump = split_at( qargs[i], parts, "=" );
+		if ( nump != 2 ){
+		  xml_error( args->os(), "invalid query: " + qstring );
+		  return;
+		}
+		if ( parts[0] == "startPosition" ){
+		  start = parts[1];
+		}
+		else if ( parts[0] == "maximumItems" ){
+		  max = parts[1];
+		}
+		else if ( parts[0] == "query" ){
+		 querys = parts[1];
+		}
+		else {
+		  xml_error( args->os(), "unsupported item " + parts[0]
+			     + " in query" );
+		  return;
+		}
+	      }
+	      string query = url_decode( querys );
+	      *Dbg(myLog) << "query='" << query << "'" << endl;
+	      *Dbg(myLog) << "startPosString='" << start << "'" << endl;
+	      *Dbg(myLog) << "maxItemsString='" << max << "'" << endl;
+	      string command = "show";
+	      string search;
+	      vector<string> qparts;
+	      int numq = split( query, qparts );
+	      if ( numq > 0 ){
+		command = qparts[0];
+		if ( command == "count" ){
+		  if ( numq < 3 ){
+		    xml_error( args->os(), "not enough arguments for 'count' "
+			       + query );
+		    return;
+		  }
+		  else if ( numq > 3 ){
+		    xml_error( args->os(), "to many arguments for 'count'"
+			       + query );
+		    return;
+		  }
+		  search = qparts[1] + "-" + qparts[2];
+		}
+		else if ( command == "show" ){
+		  if ( numq < 3 ){
+		    xml_error( args->os(), "not enough arguments for 'show' "
+			       + query );
+		    return;
+		  }
+		  else if ( numq > 3 ){
+		    xml_error( args->os(), "to many arguments for 'show'"
+			       + query );
+		    return;
+		  }
+		  search = qparts[1] + "-" + qparts[2];
+		}
+		else {
+		  xml_error( args->os(), "unsupported command"	+ command );
+		  return;
+		}
+	      }
+	      *Dbg(myLog) << "command='" << command << "'" << endl;
+	      int startPos = 1;
+	      if ( !start.empty() ){
+		if ( !stringTo( start, startPos ) ||
+		     startPos < 1 ){
+		  xml_error( args->os(), "invalid value for startPosition: "
+			     + start );
+		  return;
+		}
+	      }
+	      *Dbg(myLog) << "startPos='" << startPos << "'" << endl;
+	      int maxItems = 0;
+	      if ( !max.empty() ){
+		if ( !stringTo( max, maxItems ) ){
+		  xml_error( args->os(), "invalid value for maximumItems: "
+			     + start );
+		  return;
+		}
+	      }
+	      *Dbg(myLog) << "maxItems='" << maxItems << "'" << endl;
 	      NgramServerClass api(*it->second);
 	      LogStream LS( &myLog );
 	      LogStream DS( &myLog );
@@ -211,13 +234,37 @@ void HttpServer::callback( childArgs *args ){
 	      LS.message(logLine);
 	      DS.setstamp( StampBoth );
 	      LS.setstamp( StampBoth );
-	      XmlDoc doc( "TiMblResult" );
+	      XmlDoc doc( "searchResponse" );
 	      xmlNode *root = doc.getRoot();
-	      XmlSetAttribute( root, "att", "aha" );
-	      XmlNewTextChild( root, "node", "test" );
+	      XmlSetAttribute( root, "ngram-size",
+			       toString(it->second->ngramval() ) );
+	      if ( command == "count" ){
+		size_t cnt = api.get_count( search );
+		XmlNewTextChild( root, "numberOfItems", toString(cnt) );
+	      }
+	      else {
+		vector<string> res;
+		size_t next = 0;
+		size_t cnt = api.get_result( res, search, startPos, maxItems,
+					     next );
+		XmlNewTextChild( root, "resultSetId", search );
+		XmlNewTextChild( root, "numberOfItems", toString(cnt) );
+		xmlNode *recs = XmlNewChild( root, "records" );
 
+		for ( size_t i=0; i < res.size(); ++i ){
+		  xmlNode *rec = XmlNewChild( recs, "record" );
+		  XmlNewTextChild( rec, "recordSchema", "info:srw/schema/1/dc-v1.1" );
+		  XmlNewTextChild( rec, "recordPacking", "string" );
+		  XmlNewTextChild( rec, "recordData", res[i] );
+		  XmlNewTextChild( rec, "recordPosition",
+				   toString( startPos+i ) );
+		}
+		if ( next != 0 )
+		  XmlNewTextChild( root, "nextRecordPosition", toString(next) );
+	      }
+	      XmlNewTextChild( root, "echoedRequest", querys );
 	      string out = doc.toString();
-	      *Log(myLog) << "serialized '" << out << "'" << endl;
+	      *Dbg(myLog) << "serialized doc '" << out << "'" << endl;
 	      timeout = 10;
 	      nb_putline( args->os(), out , timeout );
 	      args->os() << endl;
@@ -225,7 +272,8 @@ void HttpServer::callback( childArgs *args ){
 	    else {
 	      *Dbg(myLog) << "invalid BASE! '" << basename
 			  << "'" << endl;
-	      args->os() << "invalid basename: '" << basename << "'" << endl;
+	      xml_error( args->os(), "invalid base: " + basename );
+	      return;
 	    }
 	    args->os() << endl;
 	  }
@@ -235,7 +283,8 @@ void HttpServer::callback( childArgs *args ){
   }
 }
 
-NgramServerClass::NgramServerClass( Timbl::TimblOpts& opts ){
+NgramServerClass::NgramServerClass( Timbl::TimblOpts& opts,
+				    LogStream* ls ): cloned(false), log(ls) {
   string val;
   bool mood;
 
@@ -269,12 +318,33 @@ NgramServerClass::NgramServerClass( Timbl::TimblOpts& opts ){
     cerr << "Missing option -f " << endl;
     usage();
   }
+  result_sets = new map<string,resultSet*>();
   cerr << "Ngram Server " << VERSION << endl;
   cerr << "based on " << TimblServer::VersionName() << endl;
 }
 
+NgramServerClass::NgramServerClass( const NgramServerClass& in ){
+  dict = in.dict;
+  cloned = true;
+  nGram = in.nGram;
+  clip = in.clip;
+  log = in.log;
+  result_sets = in.result_sets;
+}
+
 NgramServerClass::~NgramServerClass(){
-  delete dict;
+  if ( !cloned ){
+    delete dict;
+    map<string,resultSet*>::iterator it = result_sets->begin();
+    while( it != result_sets->end() ){
+      delete it->second;
+      ++it;
+    }
+    delete result_sets;
+  }
+  else {
+    cleanResults( 300 );
+  }
 }
 
 void NgramServerClass::fill_table( std::istream& is, int ngram ){
@@ -304,10 +374,24 @@ void NgramServerClass::fill_table( std::istream& is, int ngram ){
   cout << "inserted " << count << " values in the dictionary." << endl;
 }
 
+resultSet *NgramServerClass::getResultSet( const string& what ) const {
+  map<string,resultSet*>::const_iterator it = result_sets->find( what );
+  if ( it == result_sets->end() ){
+    return 0;
+  }
+  else {
+    return it->second;
+  }
+}
+
 size_t NgramServerClass::get_count( const std::string& what ) {
-  if ( last_query != what ){
-    result_set.clear();
-    last_query = what;
+  resultSet* rs = getResultSet( what );
+  size_t size = 0;
+  static pthread_mutex_t rs_lock = PTHREAD_MUTEX_INITIALIZER;
+  pthread_mutex_lock(&rs_lock);
+  // use a mutex to guard the global result_set
+  if ( rs == 0 ){
+    resultSet *search = new resultSet(what);
     size_t cnt = dict->count( what );
     if ( cnt > 0 ){
       size_t val = 1;
@@ -315,89 +399,61 @@ size_t NgramServerClass::get_count( const std::string& what ) {
       for ( pos = dict->lower_bound( what );
 	    pos != dict->upper_bound( what );
 	    ++pos ){
-	result_set.push_back( pos->second );
+	search->rset.push_back( pos->second );
       }
     }
-  }
-  return result_set.size();
-}
-
-void NgramServerClass::count( const std::string& what, ostream& os ){
-  size_t size = get_count( what );
-  os << result_set.size() << " hits" << endl;
-}
-
-void NgramServerClass::lookup( const std::string& what, ostream& os ){
-  size_t size = get_count( what );
-  for( size_t i=0; i < result_set.size(); ++i ){
-    os << "[" << i << "]=" << result_set[i] << endl;
-  }
-}
-
-void NgramServerClass::get_results( const std::string& what,
-				    size_t start, size_t num,
-				    ostream& os ){
-  if ( num == 0 )
-    num = result_set.size();
-  for( size_t i=start-1; i < result_set.size() && i < num+start-1; ++i ){
-    os << "[" << i+1 << "]=" << result_set[i] << endl;
-  }
-}
-
-void NgramServerClass::exec( const string& line, ostream& os ){
-  vector<string> vec;
-  int num = TiCC::split( line, vec );
-  if ( num == 1 ){
-    if ( TiCC::lowercase( vec[0] ) == "r" && !last_query.empty() ){
-      get_results( last_query, 1, 0, os );
-    }
-    else {
-      os << "please search something first" << endl;
-      return;
-    }
-  }
-  else if ( num == 2 ){
-    string look = vec[0] + "-" + vec[1];
-    lookup( look, os );
-  }
-  else if ( num == 3 ){
-    string command = TiCC::lowercase( vec[0] );
-    if ( command == "c" ){
-      string look = vec[1] + "-" + vec[2];
-      count( look, os );
-    }
-    else if ( command == "l" ){
-      string look = vec[1] + "-" + vec[2];
-      lookup( look, os );
-    }
-    else if ( command == "r" ){
-      size_t start;
-      if ( !TiCC::stringTo( vec[1], start ) ){
-	os << "illegal start value: " << vec[1] << endl;
-	return;
-      }
-      if ( start <= 0 ){
-	os << "invalid startPosition: " << start << " should be > 0 " << endl;
-	return;
-      }
-      size_t num;
-      if ( !TiCC::stringTo( vec[2], num ) ){
-	os << "illegal num value: " << vec[2] << endl;
-	return;
-      }
-      if ( num <= 0 ){
-	os << "invalid maximumItems: " << num << " should be > 0 " << endl;
-	return;
-      }
-      get_results( last_query, start, num, os );
-    }
-    else {
-      os << "unknown command " << command << " in " << line << endl;
-    }
+    result_sets->insert( make_pair( what, search ) );
+    size = search->rset.size();
   }
   else {
-    os << "illegal command " << line << endl;
+    time(&rs->start);
+    size = rs->rset.size();
   }
+  pthread_mutex_unlock( &rs_lock );
+  return size;
+}
+
+size_t NgramServerClass::get_result( vector<string>& res,
+				     const string& what,
+				     size_t start, size_t num, size_t& next ){
+  res.clear();
+  size_t size = get_count( what );
+  resultSet *rs = getResultSet( what );
+  *Log(log) << "retrieved result set: '" << what << "'" << endl;
+  if ( size == 0 ){
+    next = 0;
+  }
+  else {
+    if ( num == 0 )
+      num = rs->rset.size();
+    next = start - 1;
+    for( size_t i=start-1; i < rs->rset.size() && i < num+start-1; ++i ){
+      res.push_back( rs->rset[i] );
+      ++next;
+    }
+    if ( ++next > size )
+      next = 0;
+  }
+  return size;
+}
+
+void NgramServerClass::cleanResults( int keep ) {
+  static pthread_mutex_t rs_lock = PTHREAD_MUTEX_INITIALIZER;
+  time_t now;
+  time( &now );
+  pthread_mutex_lock(&rs_lock);
+  map<string,resultSet*>::iterator it = result_sets->begin();
+  while ( it != result_sets->end() ){
+    if ( (it->second->start + keep) < now ){
+      *Log(log) << "erasing result set: '" << it->first << "'" << endl;
+      delete it->second;
+      result_sets->erase( it++ );
+    }
+    else {
+      ++it;
+    }
+  }
+  pthread_mutex_unlock(&rs_lock);
 }
 
 ServerBase *startServer( TimblOpts& opts ){
@@ -436,14 +492,10 @@ ServerBase *startServer( TimblOpts& opts ){
     opts.Delete( "debug" );
   }
   string protocol = config->lookUp( "protocol" );
-  if ( protocol.empty() )
-    protocol = "tcp";
-  if ( protocol == "tcp" )
-    return new TcpServer( config );
-  else if ( protocol == "http" )
+  if ( protocol == "http" || protocol.empty() )
     return new HttpServer( config );
   else {
-    cerr << "unknown protocol " << protocol << endl;
+    cerr << "unsupported protocol " << protocol << endl;
     return 0;
   }
 }
@@ -480,7 +532,7 @@ void init( ServerBase *server, TimblOpts& opts ){
   if ( allvals.empty() ){
     cerr << "opts: " << opts << endl;
     // old style stuff
-    NgramServerClass *run = new NgramServerClass( opts );
+    NgramServerClass *run = new NgramServerClass( opts, &server->myLog );
     if ( run ){
       (*servers)["default"] = run;
       server->myLog << "started ngram server " << endl;
@@ -495,9 +547,10 @@ void init( ServerBase *server, TimblOpts& opts ){
       cerr << "OPTS: " << it->second << endl;
       TimblOpts opts( it->second );
       string dictName;
-      NgramServerClass *run = new NgramServerClass( opts );
+      NgramServerClass *run = new NgramServerClass( opts, &server->myLog );
       if ( run ){
 	(*servers)[it->first] = run;
+	server->myLog << "run = " << (void*)run << endl;
 	server->myLog << "started experiment " << it->first
 		      << " with parameters: " << it->second << endl;
       }
