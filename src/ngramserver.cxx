@@ -233,7 +233,7 @@ void SRUServer::callback( childArgs *args ){
 	}
       }
       *Dbg(myLog) << "startPos='" << start << "'" << endl;
-      int max = 0;
+      int max = 20;
       if ( !maxItems.empty() ){
 	if ( !stringTo( maxItems, max ) ){
 	  xml_error( args->os(), "invalid value for maximumItems: "
